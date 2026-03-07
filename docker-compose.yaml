@@ -1,0 +1,18 @@
+services:
+  emby-mcp:
+    image: ghcr.io/lefty3382/emby-mcp:latest
+    container_name: emby-mcp
+    environment:
+      - EMBY_HOST=${EMBY_HOST:-emby}
+      - EMBY_PORT=${EMBY_PORT:-8096}
+      - EMBY_API_KEY=${EMBY_API_KEY}
+      - EMBY_CONFIG_PATH=${EMBY_CONFIG_PATH:-/emby-config}
+      - MCP_PORT=${MCP_PORT:-8486}
+    volumes:
+      - /home/jason/emby-config:/emby-config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /mnt/tank/film:/mnt/tank/film:ro
+      - /mnt/dozer/film:/mnt/dozer/film:ro
+    ports:
+      - "8486:8486"
+    restart: unless-stopped
