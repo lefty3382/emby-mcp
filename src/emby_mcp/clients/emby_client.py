@@ -29,10 +29,14 @@ class EmbyClient:
         if self._session and not self._session.closed:
             await self._session.close()
 
+    async def _ensure_session(self) -> None:
+        """Lazily create the HTTP session on first use."""
+        if not self._session or self._session.closed:
+            await self.connect()
+
     async def get(self, endpoint: str, params: dict | None = None) -> dict | list:
         """GET request to the Emby API."""
-        if not self._session:
-            raise RuntimeError("Client not connected — call connect() first")
+        await self._ensure_session()
         async with self._session.get(endpoint, params=params) as resp:
             resp.raise_for_status()
             if resp.content_length == 0:
@@ -46,8 +50,7 @@ class EmbyClient:
         params: dict | None = None,
     ) -> dict | list:
         """POST request to the Emby API."""
-        if not self._session:
-            raise RuntimeError("Client not connected — call connect() first")
+        await self._ensure_session()
         async with self._session.post(endpoint, json=data, params=params) as resp:
             resp.raise_for_status()
             text = await resp.text()
@@ -57,8 +60,7 @@ class EmbyClient:
 
     async def delete(self, endpoint: str, params: dict | None = None) -> dict:
         """DELETE request to the Emby API."""
-        if not self._session:
-            raise RuntimeError("Client not connected — call connect() first")
+        await self._ensure_session()
         async with self._session.delete(endpoint, params=params) as resp:
             resp.raise_for_status()
             text = await resp.text()
