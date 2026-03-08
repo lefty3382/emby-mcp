@@ -23,6 +23,7 @@ def main() -> None:
 
         mcp.run(
             transport="streamable-http",
+            stateless_http=True,
             host="0.0.0.0",
             port=config.mcp_port,
         )

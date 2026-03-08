@@ -105,33 +105,40 @@ def register_server_tools(
         if not os.path.isdir(log_dir):
             return {"error": f"Log directory not found: {log_dir}"}
 
-        # Find the most recent log file
+        # Emby server logs: embyserver.txt (active) + embyserver-<id>.txt (rotated)
         log_files = sorted(
-            [f for f in os.listdir(log_dir) if f.endswith(".log")],
+            [
+                f for f in os.listdir(log_dir)
+                if f.startswith("embyserver") and f.endswith(".txt")
+            ],
             key=lambda f: os.path.getmtime(os.path.join(log_dir, f)),
             reverse=True,
         )
         if not log_files:
             return {"error": "No log files found"}
 
-        log_file = os.path.join(log_dir, log_files[0])
+        # Read up to 2 most recent log files to catch activity across rotations
         lines = []
         severity_upper = severity.upper()
+        files_checked = []
 
-        with open(log_file, "r", errors="replace") as f:
-            for line in f:
-                if severity != "all":
-                    if severity_upper not in line.upper():
+        for log_name in log_files[:2]:
+            log_file = os.path.join(log_dir, log_name)
+            files_checked.append(log_name)
+            with open(log_file, "r", errors="replace") as f:
+                for line in f:
+                    if severity != "all":
+                        if severity_upper not in line.upper():
+                            continue
+                    if search and search.lower() not in line.lower():
                         continue
-                if search and search.lower() not in line.lower():
-                    continue
-                lines.append(line.rstrip())
+                    lines.append(line.rstrip())
 
         # Return last N lines (most recent)
         lines = lines[-limit:]
 
         return {
-            "log_file": log_files[0],
+            "log_files_checked": files_checked,
             "total_matching_lines": len(lines),
             "severity_filter": severity,
             "search_filter": search,

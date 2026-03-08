@@ -3,6 +3,7 @@
 import asyncio
 import os
 import re
+import time
 from collections import Counter
 
 from fastmcp import FastMCP
@@ -37,33 +38,47 @@ def register_diagnostic_tools(
         if not os.path.isdir(log_dir):
             return {"error": f"Log directory not found: {log_dir}"}
 
+        # Emby server logs: embyserver.txt (active) + embyserver-<id>.txt (rotated)
+        # Excludes ffmpeg transcode logs and hardware_detection logs (different format)
         log_files = sorted(
-            [f for f in os.listdir(log_dir) if f.endswith(".log")],
+            [
+                f for f in os.listdir(log_dir)
+                if f.startswith("embyserver") and f.endswith(".txt")
+            ],
             key=lambda f: os.path.getmtime(os.path.join(log_dir, f)),
             reverse=True,
         )
         if not log_files:
             return {"error": "No log files found"}
 
+        # Filter to files modified within the requested time window
+        cutoff = time.time() - (hours * 3600)
+        recent_files = [
+            f for f in log_files
+            if os.path.getmtime(os.path.join(log_dir, f)) >= cutoff
+        ]
+        # Always check at least the most recent file
+        if not recent_files:
+            recent_files = log_files[:1]
+
         severity_levels = {
-            "debug": ["DEBUG", "INFO", "WARN", "ERROR", "FATAL"],
-            "info": ["INFO", "WARN", "ERROR", "FATAL"],
-            "warn": ["WARN", "ERROR", "FATAL"],
-            "error": ["ERROR", "FATAL"],
+            "debug": ["Debug", "Info", "Warn", "Error", "Fatal"],
+            "info": ["Info", "Warn", "Error", "Fatal"],
+            "warn": ["Warn", "Error", "Fatal"],
+            "error": ["Error", "Fatal"],
         }
-        allowed = severity_levels.get(severity.lower(), ["ERROR", "FATAL"])
+        allowed = severity_levels.get(severity.lower(), ["Error", "Fatal"])
 
         matching_lines = []
-        error_patterns = Counter()
+        error_patterns: Counter = Counter()
 
-        for log_file in log_files[:3]:  # Check up to 3 most recent log files
+        for log_file in recent_files:
             path = os.path.join(log_dir, log_file)
             with open(path, "r", errors="replace") as f:
                 for line in f:
                     if any(level in line for level in allowed):
                         matching_lines.append(line.rstrip())
-                        # Extract error pattern (first meaningful phrase after severity)
-                        match = re.search(r"(?:ERROR|WARN|FATAL)\s*[:\-]?\s*(.{10,60})", line)
+                        match = re.search(r"(?:Error|Warn|Fatal)\s*[:\-]?\s*(.{10,60})", line)
                         if match:
                             error_patterns[match.group(1).strip()] += 1
 
@@ -72,8 +87,9 @@ def register_diagnostic_tools(
         top_patterns = error_patterns.most_common(10)
 
         return {
-            "log_files_checked": log_files[:3],
+            "log_files_checked": [f for f in recent_files],
             "severity_filter": severity,
+            "hours_window": hours,
             "total_matching": len(matching_lines),
             "top_error_patterns": [
                 {"pattern": p, "count": c} for p, c in top_patterns
@@ -161,7 +177,7 @@ def register_diagnostic_tools(
                 checks[db_name] = {"status": "error", "message": str(e)}
 
         # NFS mount check
-        for mount in ["/mnt/tank/film", "/mnt/dozer/film"]:
+        for mount in config.media_paths:
             if os.path.exists(mount) and os.path.ismount(mount):
                 try:
                     entries = os.listdir(mount)
@@ -282,7 +298,10 @@ def register_diagnostic_tools(
         log_dir = config.log_path
         if os.path.isdir(log_dir):
             log_files = sorted(
-                [f for f in os.listdir(log_dir) if f.endswith(".log")],
+                [
+                    f for f in os.listdir(log_dir)
+                    if f.startswith("embyserver") and f.endswith(".txt")
+                ],
                 key=lambda f: os.path.getmtime(os.path.join(log_dir, f)),
                 reverse=True,
             )

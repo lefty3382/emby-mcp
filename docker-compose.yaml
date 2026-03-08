@@ -1,18 +1,20 @@
 services:
   emby-mcp:
-    image: ghcr.io/lefty3382/emby-mcp:latest
+    build: .
     container_name: emby-mcp
     environment:
       - EMBY_HOST=${EMBY_HOST:-emby}
       - EMBY_PORT=${EMBY_PORT:-8096}
       - EMBY_API_KEY=${EMBY_API_KEY}
       - EMBY_CONFIG_PATH=${EMBY_CONFIG_PATH:-/emby-config}
+      - EMBY_MEDIA_PATHS=${EMBY_MEDIA_PATHS:-}
       - MCP_PORT=${MCP_PORT:-8486}
     volumes:
-      - /home/jason/emby-config:/emby-config
+      - ${EMBY_CONFIG_HOST_PATH:?Set EMBY_CONFIG_HOST_PATH to your Emby programdata directory}:/emby-config
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /mnt/tank/film:/mnt/tank/film:ro
-      - /mnt/dozer/film:/mnt/dozer/film:ro
+      # Add read-only volume mounts for each media library path:
+      # - /path/to/movies:/mnt/movies:ro
+      # - /path/to/tv:/mnt/tv:ro
     ports:
-      - "8486:8486"
+      - "${MCP_PORT:-8486}:${MCP_PORT:-8486}"
     restart: unless-stopped

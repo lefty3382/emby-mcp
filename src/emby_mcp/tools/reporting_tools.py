@@ -33,7 +33,6 @@ def register_reporting_tools(
         report = []
         for lib in libraries:
             lib_id = lib.get("ItemId")
-            # Get movies with media info
             data = await client.get(
                 f"/emby/Users/{admin_id}/Items",
                 params={
@@ -87,7 +86,6 @@ def register_reporting_tools(
         """
         admin_id = await _get_admin_id()
 
-        # Most played items
         data = await client.get(
             f"/emby/Users/{admin_id}/Items",
             params={
@@ -140,7 +138,7 @@ def register_reporting_tools(
         library_id: str | None = None,
         limit: int = 100,
     ) -> dict:
-        """Compare database items against actual files on NFS mounts.
+        """Compare database items against actual files on disk.
 
         Flags missing files (in DB but not on disk) and reports counts.
 
@@ -177,9 +175,14 @@ def register_reporting_tools(
         }
 
     @mcp.tool
-    async def storage_report() -> dict:
-        """Storage usage by NFS mount and database sizes."""
-        mounts = ["/mnt/tank/film", "/mnt/dozer/film"]
+    async def storage_report(media_paths: list[str] | None = None) -> dict:
+        """Storage usage by media mount and database sizes.
+
+        Args:
+            media_paths: List of media mount paths to check. If omitted, uses
+                paths from the EMBY_MEDIA_PATHS environment variable.
+        """
+        mounts = media_paths or config.media_paths
         mount_stats = []
 
         for mount in mounts:
@@ -198,6 +201,9 @@ def register_reporting_tools(
             else:
                 mount_stats.append({"mount": mount, "error": "not mounted"})
 
+        if not mounts:
+            mount_stats = [{"warning": "No media paths configured. Set EMBY_MEDIA_PATHS or pass media_paths."}]
+
         # Database sizes
         db_stats = []
         for db_name in ["library.db", "users.db", "authentication.db", "activitylog.db"]:
@@ -210,4 +216,4 @@ def register_reporting_tools(
             except Exception as e:
                 db_stats.append({"database": db_name, "error": str(e)})
 
-        return {"nfs_mounts": mount_stats, "databases": db_stats}
+        return {"media_mounts": mount_stats, "databases": db_stats}

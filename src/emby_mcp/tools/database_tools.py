@@ -3,9 +3,10 @@
 from fastmcp import FastMCP
 
 from ..clients.emby_database import EmbyDatabase
+from ..config import AppConfig
 
 
-def register_database_tools(mcp: FastMCP, database: EmbyDatabase) -> None:
+def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppConfig) -> None:
     """Register database inspection and write tools."""
 
     @mcp.tool
@@ -100,11 +101,13 @@ def register_database_tools(mcp: FastMCP, database: EmbyDatabase) -> None:
         """Scan all media paths in library.db and flag mismatches.
 
         Args:
-            expected_prefixes: List of expected path prefixes (e.g., ['/mnt/tank/film', '/mnt/dozer/film']).
-                If omitted, defaults to ['/mnt/tank/film', '/mnt/dozer/film'].
+            expected_prefixes: List of expected path prefixes (e.g., ['/mnt/movies', '/mnt/tv']).
+                If omitted, uses paths from the EMBY_MEDIA_PATHS environment variable.
         """
         if expected_prefixes is None:
-            expected_prefixes = ["/mnt/tank/film", "/mnt/dozer/film"]
+            expected_prefixes = config.media_paths
+        if not expected_prefixes:
+            return {"error": "No expected_prefixes provided and EMBY_MEDIA_PATHS not configured."}
 
         rows = await database.query(
             "library.db",
@@ -169,8 +172,8 @@ def register_database_tools(mcp: FastMCP, database: EmbyDatabase) -> None:
         Safety-gated: requires Emby stopped, creates backup, runs integrity check.
 
         Args:
-            old_prefix: Path prefix to find (e.g., '\\\\\\\\10.0.40.2\\\\storage\\\\Film').
-            new_prefix: Replacement prefix (e.g., '/mnt/tank/film').
+            old_prefix: Path prefix to find (e.g., '\\\\\\\\server\\\\share\\\\Media').
+            new_prefix: Replacement prefix (e.g., '/mnt/media/movies').
             confirm: Must be true to execute. False returns a preview.
         """
         if not confirm:
