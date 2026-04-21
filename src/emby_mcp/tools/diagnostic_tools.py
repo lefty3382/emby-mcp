@@ -99,7 +99,15 @@ def register_diagnostic_tools(
 
     @mcp.tool
     async def transcode_diagnostics() -> dict:
-        """Active and recent transcode sessions with GPU/CPU details and performance."""
+        """Active transcode sessions + Emby's configured hardware acceleration state.
+
+        The per-transcode ``hardware_acceleration_type`` field is the authoritative
+        live signal (null = software fallback, ``cuda``/``nvenc``/``qsv`` = hardware).
+        The top-level ``hardware_acceleration_config`` reports what Emby is
+        *configured* to use via ``/System/Configuration/encoding`` — this is intent,
+        not live GPU health. A driver hang can leave config intact while transcodes
+        silently fall back to software; always cross-check the per-transcode field.
+        """
         sessions = await client.get("/emby/Sessions")
 
         active_transcodes = []
@@ -123,34 +131,53 @@ def register_diagnostic_tools(
                     "hardware_acceleration_type": tc.get("HardwareAccelerationType"),
                 })
 
-        # Check GPU availability
-        gpu_available = False
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "nvidia-smi", "--query-gpu=name,utilization.gpu",
-                "--format=csv,noheader",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await proc.communicate()
-            if proc.returncode == 0:
-                gpu_available = True
-                gpu_info = stdout.decode().strip()
-            else:
-                gpu_info = "nvidia-smi failed"
-        except FileNotFoundError:
-            gpu_info = "nvidia-smi not found in container"
+            cfg = await client.get("/emby/System/Configuration/encoding")
+            enabled_codecs = [
+                c for c in (cfg.get("CodecConfigurations") or [])
+                if c.get("IsEnabled")
+            ]
+
+            def pick(keyword: str) -> list:
+                return sorted({
+                    c["CodecId"] for c in enabled_codecs
+                    if keyword in (c.get("CodecId") or "").lower()
+                })
+
+            nvenc = pick("nvenc")
+            qsv = pick("qsv")
+            vaapi = pick("vaapi")
+            cuda_dec = sorted({
+                c["CodecId"] for c in enabled_codecs
+                if (c.get("CodecId") or "").startswith("V-D-")
+                and "-nv-cuda" in (c.get("CodecId") or "")
+            })
+            backends = [
+                name for name, items in
+                (("nvenc", nvenc), ("cuda_decode", cuda_dec),
+                 ("qsv", qsv), ("vaapi", vaapi))
+                if items
+            ]
+            hw_config = {
+                "enabled": bool(cfg.get("EnableHardwareEncoding")),
+                "backends_configured": backends,
+                "nvenc_encoders": nvenc,
+                "cuda_decoders": cuda_dec,
+                "qsv_codecs": qsv,
+                "vaapi_codecs": vaapi,
+            }
+        except Exception as e:
+            hw_config = {"error": f"Could not read encoding config: {e}"}
 
         return {
             "active_transcodes": active_transcodes,
             "transcode_count": len(active_transcodes),
-            "gpu_available": gpu_available,
-            "gpu_info": gpu_info,
+            "hardware_acceleration_config": hw_config,
         }
 
     @mcp.tool
     async def connectivity_check() -> dict:
-        """Verify Emby server health: API, database, NFS mounts, GPU, container."""
+        """Verify Emby server health: API, database, NFS mounts, hw encoding, container."""
         checks = {}
 
         # API check
@@ -191,23 +218,26 @@ def register_diagnostic_tools(
             else:
                 checks[mount] = {"status": "error", "mounted": False}
 
-        # GPU check
+        # Hardware encoding (config intent from Emby, not live GPU health — the
+        # per-transcode 'hardware_acceleration_type' in transcode_diagnostics is
+        # the authoritative live signal).
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "nvidia-smi", "--query-gpu=name", "--format=csv,noheader",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            cfg = await client.get("/emby/System/Configuration/encoding")
+            codecs = cfg.get("CodecConfigurations") or []
+            has_hw = any(
+                c.get("IsEnabled") and any(
+                    k in (c.get("CodecId") or "").lower()
+                    for k in ("nvenc", "qsv", "vaapi")
+                )
+                for c in codecs
             )
-            stdout, _ = await proc.communicate()
-            if proc.returncode == 0:
-                checks["gpu"] = {
-                    "status": "ok",
-                    "name": stdout.decode().strip(),
-                }
-            else:
-                checks["gpu"] = {"status": "unavailable"}
-        except FileNotFoundError:
-            checks["gpu"] = {"status": "unavailable", "message": "nvidia-smi not in container"}
+            checks["hardware_encoding"] = {
+                "status": "ok",
+                "enabled": bool(cfg.get("EnableHardwareEncoding")),
+                "has_hw_encoder": has_hw,
+            }
+        except Exception as e:
+            checks["hardware_encoding"] = {"status": "error", "message": str(e)}
 
         # Container status
         try:

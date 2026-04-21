@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-04-20
+
+### Fixed
+- **transcode_diagnostics**: Removed the `nvidia-smi` probe — the MCP container doesn't ship `nvidia-smi` and, more importantly, runs in a separate container from Emby, so a binary presence check on the MCP side was never a valid signal for Emby's GPU state. Replaced `gpu_available`/`gpu_info` with a `hardware_acceleration_config` object sourced from Emby's own `/System/Configuration/encoding` endpoint (reports `enabled`, `backends_configured`, and enabled NVENC/CUDA/QSV/VAAPI codec IDs). The per-transcode `hardware_acceleration_type` field already surfaced live state and remains the authoritative live signal.
+- **connectivity_check**: Removed the `nvidia-smi` GPU check for the same reason; added a `hardware_encoding` check that queries Emby's encoding config and reports `enabled` + `has_hw_encoder`.
+
+### Changed
+- **Docstring clarity**: `transcode_diagnostics` now explicitly documents that the top-level field is configured intent (not live GPU health), and directs callers to the per-transcode `hardware_acceleration_type` as the live signal.
+
+### Context
+- The `nvidia-smi`-based probe produced identical `gpu_available: false` output whether Emby was hardware-transcoding normally or silently falling back to software after a driver hang (confirmed during a 2026-04-12 NVIDIA Xid 140 incident on VM 106 — see `docs/issues/transcode-diagnostics-gpu-false-negative.md`). The new probe reports real configuration; live hang detection remains the responsibility of journal/Xid monitoring outside the MCP.
+
 ## [1.1.0] - 2026-03-08
 
 ### Fixed
