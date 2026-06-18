@@ -4,6 +4,8 @@ A [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server for co
 
 Built with [FastMCP](https://gofastmcp.com/) 3.x and designed to run co-located with Emby for localhost API access and direct database inspection.
 
+> **Compatibility: Emby 4.9+.** The database tools query the 4.9+ `library.db` schema (`MediaItems`, `ListItems`, `UserItemShares`). On older servers, which use the pre-4.9 table names (`TypedBaseItems`, `PlaylistItems`), the raw-SQL tools will fail with `no such table: MediaItems`. The REST-based tools are unaffected.
+
 ## Features
 
 ### Server & System (4 tools)
@@ -35,7 +37,7 @@ Built with [FastMCP](https://gofastmcp.com/) 3.x and designed to run co-located 
 - **search_items** — Full-text search across all media types
 
 ### Playlists & Collections (5 tools)
-- **list_playlists** — All playlists with item counts
+- **list_playlists** — All playlists (shared and owner-private) with owner and item counts
 - **create_playlist** — Create new playlists
 - **get_playlist_items** — List items in a playlist
 - **add_playlist_items** — Add items to an existing playlist
@@ -46,7 +48,7 @@ Built with [FastMCP](https://gofastmcp.com/) 3.x and designed to run co-located 
 - **get_db_table_info** — Schema discovery (tables, columns, row counts)
 - **get_db_statistics** — Database file size, WAL status, integrity
 - **get_emby_connect_status** — Emby Connect linkage details for all users
-- **check_playlist_integrity** — Cross-reference DB vs API playlist data
+- **check_playlist_integrity** — Flag orphaned playlist entries (members no longer in the library)
 - **audit_paths** — Scan media paths and flag mismatches against expected prefixes
 - **path_surgery** — Find/replace path prefixes in library.db (safety-gated)
 - **delete_playlist** — Remove playlist from database (safety-gated)
@@ -95,6 +97,7 @@ Designed to run as a Docker container alongside Emby on the same host. This enab
 - Docker and Docker Compose
 - An Emby API key (Dashboard > Advanced > API Keys)
 - Emby programdata directory accessible on the host
+- **Emby 4.9 or newer** (the database tools target the 4.9+ `library.db` schema)
 
 ### Quick Start
 
