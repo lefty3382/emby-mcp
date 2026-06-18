@@ -6,6 +6,7 @@ from fastmcp import FastMCP
 
 from ..clients.emby_client import EmbyClient
 from ..clients.emby_database import EmbyDatabase
+from ..clients.schema import ITEMS_TABLE
 from ..config import AppConfig
 
 
@@ -146,7 +147,7 @@ def register_reporting_tools(
             library_id: Optional library ID to limit the check.
             limit: Maximum items to check per query (default: 100).
         """
-        sql = "SELECT guid, Name, Path FROM TypedBaseItems WHERE Path IS NOT NULL AND Path != ''"
+        sql = f"SELECT guid, Name, Path FROM {ITEMS_TABLE} WHERE Path IS NOT NULL AND Path != ''"
         if library_id:
             sql += f" AND ParentId = '{library_id}'"
         sql += f" LIMIT {limit}"

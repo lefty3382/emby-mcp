@@ -48,7 +48,7 @@ def create_server(
 
     try:
         from .tools.playlist_tools import register_playlist_tools
-        register_playlist_tools(mcp, client)
+        register_playlist_tools(mcp, client, database)
     except ImportError:
         pass
 

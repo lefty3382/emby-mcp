@@ -3,7 +3,31 @@
 from fastmcp import FastMCP
 
 from ..clients.emby_database import EmbyDatabase
+from ..clients.schema import (
+    ITEMS_TABLE,
+    LIST_ITEMS_TABLE,
+    USER_ITEM_SHARES_TABLE,
+)
 from ..config import AppConfig
+
+
+def _playlist_delete_statements(playlist_id: int) -> list[tuple[str, str]]:
+    """(result_key, DELETE sql) tuples to remove a playlist and its links."""
+    pid = int(playlist_id)
+    return [
+        ("items_deleted", f"DELETE FROM {LIST_ITEMS_TABLE} WHERE ListId = {pid}"),
+        ("shares_deleted", f"DELETE FROM {USER_ITEM_SHARES_TABLE} WHERE ItemId = {pid}"),
+        ("playlist_deleted", f"DELETE FROM {ITEMS_TABLE} WHERE Id = {pid}"),
+    ]
+
+
+def _format_orphans(rows: list[dict]) -> dict:
+    """Shape get_playlist_orphans() rows into the integrity report."""
+    return {
+        "playlists_with_orphans": rows,
+        "total_orphaned_entries": sum(r.get("orphaned_entries", 0) for r in rows),
+        "count": len(rows),
+    }
 
 
 def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppConfig) -> None:
@@ -25,33 +49,13 @@ def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppCon
 
     @mcp.tool
     async def check_playlist_integrity() -> dict:
-        """Compare playlist items in the database vs REST API.
+        """Find orphaned playlist entries.
 
-        Flags orphaned DB entries (items in DB but not accessible via API)
-        and missing DB entries (items in API but not in DB).
+        Pure DB check (4.9+ schema): flags ListItems rows whose target media
+        item no longer exists in MediaItems.
         """
-        # Get playlists from DB
-        db_playlists = await database.query(
-            "library.db",
-            "SELECT guid, Name, Path, type FROM TypedBaseItems WHERE type LIKE '%Playlist%'",
-        )
-
-        results = []
-        for pl in db_playlists:
-            # Count items in DB for this playlist
-            db_items = await database.query(
-                "library.db",
-                f"SELECT COUNT(*) as count FROM PlaylistItems WHERE PlaylistId = '{pl['guid']}'",
-            )
-            db_count = db_items[0]["count"] if db_items else 0
-            results.append({
-                "name": pl.get("Name"),
-                "guid": pl.get("guid"),
-                "path": pl.get("Path"),
-                "db_item_count": db_count,
-            })
-
-        return {"playlists": results, "count": len(results)}
+        rows = await database.get_playlist_orphans()
+        return _format_orphans(rows)
 
     @mcp.tool
     async def get_emby_connect_status() -> dict:
@@ -111,7 +115,8 @@ def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppCon
 
         rows = await database.query(
             "library.db",
-            "SELECT guid, Name, Path FROM TypedBaseItems WHERE Path IS NOT NULL AND Path != '' LIMIT 5000",
+            f"SELECT guid, Name, Path FROM {ITEMS_TABLE} "
+            "WHERE Path IS NOT NULL AND Path != '' LIMIT 5000",
         )
 
         matched = 0
@@ -180,11 +185,13 @@ def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppCon
             # Preview: count matching rows
             text_rows = await database.query(
                 "library.db",
-                f"SELECT COUNT(*) as count FROM TypedBaseItems WHERE Path LIKE '{old_prefix}%'",
+                f"SELECT COUNT(*) as count FROM {ITEMS_TABLE} "
+                f"WHERE Path LIKE '{old_prefix}%'",
             )
             blob_rows = await database.query(
                 "library.db",
-                f"SELECT COUNT(*) as count FROM TypedBaseItems WHERE CAST(data AS TEXT) LIKE '%{old_prefix}%'",
+                f"SELECT COUNT(*) as count FROM {ITEMS_TABLE} "
+                f"WHERE CAST(data AS TEXT) LIKE '%{old_prefix}%'",
             )
             return {
                 "mode": "preview",
@@ -197,13 +204,13 @@ def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppCon
 
         # Execute with safety gates
         text_sql = (
-            f"UPDATE TypedBaseItems SET Path = REPLACE(Path, '{old_prefix}', '{new_prefix}') "
+            f"UPDATE {ITEMS_TABLE} SET Path = REPLACE(Path, '{old_prefix}', '{new_prefix}') "
             f"WHERE Path LIKE '{old_prefix}%'"
         )
         text_result = await database.write("library.db", text_sql, confirm=True)
 
         blob_sql = (
-            f"UPDATE TypedBaseItems SET data = CAST("
+            f"UPDATE {ITEMS_TABLE} SET data = CAST("
             f"REPLACE(CAST(data AS TEXT), '{old_prefix}', '{new_prefix}') AS BLOB) "
             f"WHERE CAST(data AS TEXT) LIKE '%{old_prefix}%'"
         )
@@ -220,50 +227,33 @@ def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppCon
         playlist_id: str,
         confirm: bool = False,
     ) -> dict:
-        """Delete a playlist and its item relationships from library.db.
+        """Delete a playlist and its item/share rows from library.db.
 
         Cannot be done via REST API. Safety-gated: requires Emby stopped,
         creates backup, runs integrity check.
 
         Args:
-            playlist_id: The playlist GUID from the database.
+            playlist_id: The integer playlist Id (as returned by list_playlists).
             confirm: Must be true to execute. False returns a preview.
         """
-        if not confirm:
-            # Preview: show what would be deleted
-            playlist = await database.query(
-                "library.db",
-                f"SELECT guid, Name, Path FROM TypedBaseItems WHERE guid = '{playlist_id}'",
-            )
-            item_count = await database.query(
-                "library.db",
-                f"SELECT COUNT(*) as count FROM PlaylistItems WHERE PlaylistId = '{playlist_id}'",
-            )
-            if not playlist:
-                return {"error": f"No playlist found with ID: {playlist_id}"}
+        try:
+            pid = int(playlist_id)
+        except (TypeError, ValueError):
+            return {"error": f"playlist_id must be an integer Id: {playlist_id!r}"}
 
+        if not confirm:
+            summary = await database.get_playlist_summary(pid)
+            if not summary:
+                return {"error": f"No playlist found with Id: {pid}"}
             return {
                 "mode": "preview",
-                "playlist_name": playlist[0].get("Name"),
-                "playlist_id": playlist_id,
-                "item_count": item_count[0]["count"] if item_count else 0,
+                "playlist_name": summary.get("Name"),
+                "playlist_id": pid,
+                "item_count": summary.get("item_count", 0),
                 "message": "Pass confirm=true to delete this playlist.",
             }
 
-        # Delete items first, then playlist record
-        items_result = await database.write(
-            "library.db",
-            f"DELETE FROM PlaylistItems WHERE PlaylistId = '{playlist_id}'",
-            confirm=True,
-        )
-        playlist_result = await database.write(
-            "library.db",
-            f"DELETE FROM TypedBaseItems WHERE guid = '{playlist_id}'",
-            confirm=True,
-        )
-
-        return {
-            "mode": "executed",
-            "items_deleted": items_result,
-            "playlist_deleted": playlist_result,
-        }
+        results: dict = {"mode": "executed", "playlist_id": pid}
+        for key, sql in _playlist_delete_statements(pid):
+            results[key] = await database.write("library.db", sql, confirm=True)
+        return results

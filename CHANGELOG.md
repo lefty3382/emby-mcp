@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-06-17
+
+### Fixed
+- **list_playlists**: Was returning only 3 of 35 playlists. It queried the user-scoped REST endpoint `/Users/{admin}/Items`, which only surfaces globally-shared playlists under `/playlists/`; the owner-private playlists (`/userplaylists/`, `UserItemShares.ShareLevel=10000`) were invisible to that context. Now enumerated directly from `library.db` and returns every playlist with `owner`, `owner_user_id`, `item_count`, and a `shared` flag.
+- **check_playlist_integrity**: Errored `no such table: TypedBaseItems` on Emby 4.9+. Rewritten to the renamed schema (`ListItems` JOIN `MediaItems`); now reports orphaned playlist entries (members whose target item no longer exists).
+- **audit_paths, media_integrity_report, path_surgery, delete_playlist**: All referenced the pre-4.9 `TypedBaseItems`/`PlaylistItems` tables and were broken on Emby 4.9+. Repointed to `MediaItems`/`ListItems`. `delete_playlist` now keys off the integer playlist `Id` (matching `list_playlists`) and also clears the playlist's `UserItemShares` row to avoid an orphaned share.
+
+### Added
+- **clients/schema.py**: Central constants for Emby 4.9+ `library.db` table/column names, so a future schema rename is a one-line change.
+- **Owner resolution**: `EmbyDatabase.get_internal_user_guid_map()` bridges the integer `UserId` in `UserItemShares` to the canonical GUID `/Users` exposes, letting `list_playlists` surface owner display names.
+- **Test suite**: pytest + pytest-asyncio with a temp-SQLite fixture on the 4.9+ schema, covering the owner GUID map, playlist enumeration, orphan detection, and the destructive `delete_playlist` SQL.
+
+### Changed
+- **Version drift resolved**: synced `pyproject.toml` (was 1.1.0) and `__init__.py` (was 1.0.0) to 1.3.0.
+
+### Context
+- Verified against a live Emby 4.9.5.0 server: 35 playlists present while `list_playlists` returned 3, and `check_playlist_integrity` errored on `TypedBaseItems`. `get_playlist_items` was also flagged in the report but proved to already work for owner-private playlists (returned all 314 items of a private playlist) — the only barrier was ID discovery, which the `list_playlists` fix resolves, so no change was needed there.
+
 ## [1.2.0] - 2026-04-20
 
 ### Fixed
