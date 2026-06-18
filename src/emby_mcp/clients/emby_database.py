@@ -3,6 +3,7 @@
 import asyncio
 import os
 import shutil
+import uuid
 from datetime import datetime, timezone
 
 import aiosqlite
@@ -93,6 +94,26 @@ class EmbyDatabase:
                 stats["integrity"] = result
 
         return stats
+
+    async def get_internal_user_guid_map(self) -> dict[int, str]:
+        """Map LocalUsersv2 integer Id -> 32-char lowercase GUID.
+
+        The GUID is stored as a .NET little-endian byte blob; the REST /Users
+        API exposes the same id in canonical 32-char hex form. User display
+        names live in a non-UTF-8 binary blob, so we bridge int id -> guid here
+        and resolve the name against /Users in the tool layer.
+        """
+        rows = await self.query(
+            "users.db", "SELECT Id, hex(guid) AS guid_hex FROM LocalUsersv2"
+        )
+        mapping: dict[int, str] = {}
+        for row in rows:
+            uid = row.get("Id")
+            guid_hex = row.get("guid_hex")
+            if uid is None or not guid_hex:
+                continue
+            mapping[int(uid)] = uuid.UUID(bytes_le=bytes.fromhex(guid_hex)).hex
+        return mapping
 
     async def _check_container_stopped(self) -> None:
         try:
