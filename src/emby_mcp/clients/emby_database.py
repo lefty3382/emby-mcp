@@ -9,6 +9,13 @@ from datetime import datetime, timezone
 import aiosqlite
 
 from ..config import AppConfig
+from .schema import (
+    ITEMS_TABLE,
+    LIST_ITEMS_TABLE,
+    PLAYLIST_TYPE,
+    SHARE_LEVEL_PRIVATE,
+    USER_ITEM_SHARES_TABLE,
+)
 
 VALID_DBS = frozenset({"library.db", "users.db", "authentication.db", "activitylog.db"})
 
@@ -114,6 +121,52 @@ class EmbyDatabase:
                 continue
             mapping[int(uid)] = uuid.UUID(bytes_le=bytes.fromhex(guid_hex)).hex
         return mapping
+
+    async def get_playlists(self) -> list[dict]:
+        """All playlists with owner_user_id (private share) and item_count."""
+        sql = (
+            "SELECT p.Id, p.Name, p.Path, s.UserId AS owner_user_id, "
+            f"(SELECT COUNT(*) FROM {LIST_ITEMS_TABLE} li WHERE li.ListId = p.Id) "
+            "AS item_count "
+            f"FROM {ITEMS_TABLE} p "
+            f"LEFT JOIN {USER_ITEM_SHARES_TABLE} s "
+            f"ON s.ItemId = p.Id AND s.ShareLevel = {SHARE_LEVEL_PRIVATE} "
+            f"WHERE p.type = {PLAYLIST_TYPE} "
+            "ORDER BY item_count DESC"
+        )
+        return await self.query("library.db", sql)
+
+    async def get_playlist_orphans(self) -> list[dict]:
+        """Playlist entries whose target item no longer exists."""
+        sql = (
+            "SELECT li.ListId AS list_id, p.Name AS name, "
+            "COUNT(*) AS orphaned_entries "
+            f"FROM {LIST_ITEMS_TABLE} li "
+            f"JOIN {ITEMS_TABLE} p ON p.Id = li.ListId "
+            f"LEFT JOIN {ITEMS_TABLE} m ON m.Id = li.ListItemId "
+            "WHERE m.Id IS NULL "
+            "GROUP BY li.ListId, p.Name"
+        )
+        return await self.query("library.db", sql)
+
+    async def get_playlist_summary(self, playlist_id: int) -> dict | None:
+        """Name, path and item count for one playlist, or None if absent."""
+        pid = int(playlist_id)
+        rows = await self.query(
+            "library.db",
+            f"SELECT Id, Name, Path FROM {ITEMS_TABLE} "
+            f"WHERE Id = {pid} AND type = {PLAYLIST_TYPE}",
+        )
+        if not rows:
+            return None
+        counts = await self.query(
+            "library.db",
+            f"SELECT COUNT(*) AS item_count FROM {LIST_ITEMS_TABLE} "
+            f"WHERE ListId = {pid}",
+        )
+        summary = rows[0]
+        summary["item_count"] = counts[0]["item_count"] if counts else 0
+        return summary
 
     async def _check_container_stopped(self) -> None:
         try:
