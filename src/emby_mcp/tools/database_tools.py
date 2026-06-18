@@ -115,7 +115,8 @@ def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppCon
 
         rows = await database.query(
             "library.db",
-            "SELECT guid, Name, Path FROM TypedBaseItems WHERE Path IS NOT NULL AND Path != '' LIMIT 5000",
+            f"SELECT guid, Name, Path FROM {ITEMS_TABLE} "
+            "WHERE Path IS NOT NULL AND Path != '' LIMIT 5000",
         )
 
         matched = 0
@@ -184,11 +185,13 @@ def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppCon
             # Preview: count matching rows
             text_rows = await database.query(
                 "library.db",
-                f"SELECT COUNT(*) as count FROM TypedBaseItems WHERE Path LIKE '{old_prefix}%'",
+                f"SELECT COUNT(*) as count FROM {ITEMS_TABLE} "
+                f"WHERE Path LIKE '{old_prefix}%'",
             )
             blob_rows = await database.query(
                 "library.db",
-                f"SELECT COUNT(*) as count FROM TypedBaseItems WHERE CAST(data AS TEXT) LIKE '%{old_prefix}%'",
+                f"SELECT COUNT(*) as count FROM {ITEMS_TABLE} "
+                f"WHERE CAST(data AS TEXT) LIKE '%{old_prefix}%'",
             )
             return {
                 "mode": "preview",
@@ -201,13 +204,13 @@ def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppCon
 
         # Execute with safety gates
         text_sql = (
-            f"UPDATE TypedBaseItems SET Path = REPLACE(Path, '{old_prefix}', '{new_prefix}') "
+            f"UPDATE {ITEMS_TABLE} SET Path = REPLACE(Path, '{old_prefix}', '{new_prefix}') "
             f"WHERE Path LIKE '{old_prefix}%'"
         )
         text_result = await database.write("library.db", text_sql, confirm=True)
 
         blob_sql = (
-            f"UPDATE TypedBaseItems SET data = CAST("
+            f"UPDATE {ITEMS_TABLE} SET data = CAST("
             f"REPLACE(CAST(data AS TEXT), '{old_prefix}', '{new_prefix}') AS BLOB) "
             f"WHERE CAST(data AS TEXT) LIKE '%{old_prefix}%'"
         )
