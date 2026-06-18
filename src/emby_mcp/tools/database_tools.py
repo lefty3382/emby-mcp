@@ -6,6 +6,15 @@ from ..clients.emby_database import EmbyDatabase
 from ..config import AppConfig
 
 
+def _format_orphans(rows: list[dict]) -> dict:
+    """Shape get_playlist_orphans() rows into the integrity report."""
+    return {
+        "playlists_with_orphans": rows,
+        "total_orphaned_entries": sum(r.get("orphaned_entries", 0) for r in rows),
+        "count": len(rows),
+    }
+
+
 def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppConfig) -> None:
     """Register database inspection and write tools."""
 
@@ -25,33 +34,13 @@ def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppCon
 
     @mcp.tool
     async def check_playlist_integrity() -> dict:
-        """Compare playlist items in the database vs REST API.
+        """Find orphaned playlist entries.
 
-        Flags orphaned DB entries (items in DB but not accessible via API)
-        and missing DB entries (items in API but not in DB).
+        Pure DB check (4.9+ schema): flags ListItems rows whose target media
+        item no longer exists in MediaItems.
         """
-        # Get playlists from DB
-        db_playlists = await database.query(
-            "library.db",
-            "SELECT guid, Name, Path, type FROM TypedBaseItems WHERE type LIKE '%Playlist%'",
-        )
-
-        results = []
-        for pl in db_playlists:
-            # Count items in DB for this playlist
-            db_items = await database.query(
-                "library.db",
-                f"SELECT COUNT(*) as count FROM PlaylistItems WHERE PlaylistId = '{pl['guid']}'",
-            )
-            db_count = db_items[0]["count"] if db_items else 0
-            results.append({
-                "name": pl.get("Name"),
-                "guid": pl.get("guid"),
-                "path": pl.get("Path"),
-                "db_item_count": db_count,
-            })
-
-        return {"playlists": results, "count": len(results)}
+        rows = await database.get_playlist_orphans()
+        return _format_orphans(rows)
 
     @mcp.tool
     async def get_emby_connect_status() -> dict:
