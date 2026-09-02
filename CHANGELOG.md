@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] - 2026-09-02
+
+### Fixed
+- **get_server_info**: Reported `has_premiere: false` on a server with active Premiere. The field was mapped to `SupportsAutoRunAtStartup` — a startup-service flag, always false on Linux, unrelated to licensing. Emby's `/System/Info` carries no licence field at all; Premiere status now comes from `/emby/Plugins/SecurityInfo` (`IsMBSupporter`). If that call fails, `has_premiere` is `null` (unknown) rather than a confident `false`.
+- **get_server_info**: Five more fields were permanently null from the same Emby 4.9 field rot — 6 of 12 fields were dead. `LocalAddress`/`WanAddress` became the `LocalAddresses`/`RemoteAddresses` arrays and are now reported as `local_addresses`/`remote_addresses`; `ProgramDataPath`, `ItemsByNamePath`, `LogPath` and `CachePath` are no longer returned by Emby 4.9 at all and are replaced by `config_path`/`db_path`/`log_path` from this server's own configuration — the paths its DB and log tools actually read.
+- **get_emby_connect_status**: Returned a row per user with every field null. It ran `SELECT * FROM LocalUsersv2`, but that table is `(Id INTEGER, guid GUID, data BLOB)` — user attributes are serialized inside the BLOB and unreachable by column name, so `ConnectUserName`, `Name`, `Password` and the dates all resolved to `None` and `auth_method` degraded to `"none"` for everyone. Repointed to REST `/emby/Users`, which carries all of it. `id` is now the canonical GUID rather than the internal integer rowid, matching every other tool.
+
+### Added
+- **get_emby_connect_status**: `connect_linked` count alongside `count`.
+- **tests/test_no_dead_api_fields.py**: Field-level sibling of `test_no_dead_tables.py`. Fails if source reads an API field Emby 4.9 does not return, or queries `LocalUsersv2` for attribute columns. Comments and docstrings are stripped before matching so these names stay writable in prose that warns against them.
+- **docs/issues/server-info-and-connect-status-null-fields.md**: Full investigation writeup.
+
+### Removed
+- **get_emby_connect_status**: `connect_user_id`. Emby 4.9 exposes no such field on `/Users`, so it could only ever be null.
+
+### Context
+- Verified against the live Emby 4.9.5.0 server: `has_premiere` now `true` (matching `IsMBSupporter: true`), `get_server_info` returns zero null fields, and `get_emby_connect_status` returns 40 users — all with real names and GUID ids — of which 35 are Connect-linked (20 `connect`, 15 `connect+local`, 5 `local`).
+- The source report also claimed `get_emby_connect_status` returned 45 rows against a real count of 40. That half did not reproduce: `SELECT COUNT(*) FROM LocalUsersv2`, the tool, and REST `/Users` all agreed on 40. Only the null-field defect was real.
+
 ## [1.3.0] - 2026-06-17
 
 ### Fixed

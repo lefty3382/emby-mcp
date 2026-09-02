@@ -2,6 +2,7 @@
 
 from fastmcp import FastMCP
 
+from ..clients.emby_client import EmbyClient
 from ..clients.emby_database import EmbyDatabase
 from ..clients.schema import (
     ITEMS_TABLE,
@@ -21,6 +22,35 @@ def _playlist_delete_statements(playlist_id: int) -> list[tuple[str, str]]:
     ]
 
 
+def _build_connect_status(users: list[dict]) -> list[dict]:
+    """Shape REST /Users rows into Emby Connect linkage records.
+
+    Sourced from REST, not users.db: LocalUsersv2 is (Id, guid, data BLOB),
+    so every user attribute is serialized inside the BLOB and unreachable by
+    column name. Emby 4.9 exposes no ConnectUserId, so it is not reported.
+    """
+    result = []
+    for u in users:
+        connect_name = u.get("ConnectUserName")
+        has_password = bool(u.get("HasConfiguredPassword") or u.get("HasPassword"))
+        result.append({
+            "id": u.get("Id"),
+            "name": u.get("Name"),
+            "connect_user_name": connect_name,
+            "connect_link_type": u.get("ConnectLinkType"),
+            "has_local_password": has_password,
+            "last_login_date": u.get("LastLoginDate"),
+            "last_activity_date": u.get("LastActivityDate"),
+            "auth_method": (
+                "connect+local" if connect_name and has_password
+                else "connect" if connect_name
+                else "local" if has_password
+                else "none"
+            ),
+        })
+    return result
+
+
 def _format_orphans(rows: list[dict]) -> dict:
     """Shape get_playlist_orphans() rows into the integrity report."""
     return {
@@ -30,7 +60,9 @@ def _format_orphans(rows: list[dict]) -> dict:
     }
 
 
-def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppConfig) -> None:
+def register_database_tools(
+    mcp: FastMCP, client: EmbyClient, database: EmbyDatabase, config: AppConfig
+) -> None:
     """Register database inspection and write tools."""
 
     @mcp.tool
@@ -59,46 +91,22 @@ def register_database_tools(mcp: FastMCP, database: EmbyDatabase, config: AppCon
 
     @mcp.tool
     async def get_emby_connect_status() -> dict:
-        """Get detailed Emby Connect linkage status for all users.
+        """Get Emby Connect linkage status for all users.
 
-        Shows: Connect username, user ID, link date, auth method,
-        last login, and local password status.
+        Shows: Connect username, link type, auth method, last login,
+        and local password status.
         """
-        # Query users.db for Connect information
         try:
-            users = await database.query(
-                "users.db",
-                "SELECT * FROM LocalUsersv2",
-            )
-        except Exception:
-            # Table name might differ — try schema discovery
-            tables = await database.get_table_info("users.db")
-            user_tables = [t["name"] for t in tables if "user" in t["name"].lower()]
-            return {
-                "error": "Could not find user table. Available tables with 'user' in name",
-                "tables": user_tables,
-                "hint": "Use query_database to inspect table schema",
-            }
+            users = await client.get("/emby/Users")
+        except Exception as e:
+            return {"error": str(e)}
 
-        result = []
-        for u in users:
-            result.append({
-                "id": u.get("Id") or u.get("guid"),
-                "name": u.get("Name") or u.get("Username"),
-                "connect_user_name": u.get("ConnectUserName"),
-                "connect_user_id": u.get("ConnectUserId"),
-                "connect_link_type": u.get("ConnectLinkType"),
-                "has_local_password": bool(u.get("Password") or u.get("EasyPassword")),
-                "last_login_date": u.get("LastLoginDate"),
-                "last_activity_date": u.get("LastActivityDate"),
-                "auth_method": (
-                    "connect+local" if u.get("ConnectUserName") and (u.get("Password") or u.get("EasyPassword"))
-                    else "connect" if u.get("ConnectUserName")
-                    else "local" if (u.get("Password") or u.get("EasyPassword"))
-                    else "none"
-                ),
-            })
-        return {"users": result, "count": len(result)}
+        result = _build_connect_status(users)
+        return {
+            "users": result,
+            "count": len(result),
+            "connect_linked": sum(1 for r in result if r["connect_user_name"]),
+        }
 
     @mcp.tool
     async def audit_paths(expected_prefixes: list[str] | None = None) -> dict:

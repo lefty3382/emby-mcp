@@ -54,7 +54,7 @@ def create_server(
 
     try:
         from .tools.database_tools import register_database_tools
-        register_database_tools(mcp, database, config)
+        register_database_tools(mcp, client, database, config)
     except ImportError:
         pass
 
