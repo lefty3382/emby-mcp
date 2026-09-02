@@ -9,6 +9,34 @@ from ..clients.emby_client import EmbyClient
 from ..config import AppConfig
 
 
+def _build_server_info(
+    info: dict, security: dict | None, config: AppConfig
+) -> dict:
+    """Shape /System/Info + /Plugins/SecurityInfo into the server_info payload.
+
+    Premiere status lives in /Plugins/SecurityInfo (IsMBSupporter); /System/Info
+    carries no licence field. `security` is None when that call failed, which
+    reports has_premiere as unknown rather than as a confident false.
+
+    Emby 4.9 dropped the ProgramDataPath/ItemsByNamePath/LogPath/CachePath keys
+    and replaced LocalAddress/WanAddress with arrays, so the paths below come
+    from this server's own configuration — the ones its DB and log tools read.
+    """
+    return {
+        "server_name": info.get("ServerName"),
+        "version": info.get("Version"),
+        "operating_system": info.get("OperatingSystem"),
+        "server_id": info.get("Id"),
+        "local_addresses": info.get("LocalAddresses") or [],
+        "remote_addresses": info.get("RemoteAddresses") or [],
+        "has_premiere": None if security is None else bool(security.get("IsMBSupporter")),
+        "can_self_restart": info.get("CanSelfRestart"),
+        "config_path": config.config_path,
+        "db_path": config.db_path,
+        "log_path": config.log_path,
+    }
+
+
 def register_server_tools(
     mcp: FastMCP, client: EmbyClient, config: AppConfig
 ) -> None:
@@ -16,25 +44,16 @@ def register_server_tools(
 
     @mcp.tool
     async def get_server_info() -> dict:
-        """Get Emby server information including version, OS, uptime, and Premiere status."""
+        """Get Emby server information including version, OS, paths, and Premiere status."""
         try:
             info = await client.get("/emby/System/Info")
-            return {
-                "server_name": info.get("ServerName"),
-                "version": info.get("Version"),
-                "operating_system": info.get("OperatingSystem"),
-                "server_id": info.get("Id"),
-                "local_address": info.get("LocalAddress"),
-                "wan_address": info.get("WanAddress"),
-                "has_premiere": info.get("SupportsAutoRunAtStartup"),
-                "can_self_restart": info.get("CanSelfRestart"),
-                "program_data_path": info.get("ProgramDataPath"),
-                "items_by_name_path": info.get("ItemsByNamePath"),
-                "log_path": info.get("LogPath"),
-                "cache_path": info.get("CachePath"),
-            }
         except Exception as e:
             return {"error": str(e), "status": "unreachable"}
+        try:
+            security = await client.get("/emby/Plugins/SecurityInfo")
+        except Exception:
+            security = None  # premiere status unknown, not false
+        return _build_server_info(info, security, config)
 
     @mcp.tool
     async def get_active_streams() -> dict:

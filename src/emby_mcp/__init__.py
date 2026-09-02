@@ -1,3 +1,3 @@
 """Emby MCP Server — complete Emby management via MCP."""
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
